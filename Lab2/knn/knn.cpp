@@ -18,19 +18,58 @@ enum metric {
     EUCLIDIAN, MANTHATTAN
 };
 const uint METRIC_SIZE = 2;
-const metric metrics[METRIC_SIZE] = {EUCLIDIAN, MANTHATTAN};
+const vector<metric> metrics = {EUCLIDIAN, MANTHATTAN};
 
 enum kernel {
-    EPANECHNIKOV, QUARTIC, TRIWEIGHT
+    UNIFORM, TRIANGULAR, EPANECHNIKOV, QUARTIC, TRIWEIGHT
 };
-const uint KERNEL_SIZE = 3;
-const kernel kernels[KERNEL_SIZE] = {EPANECHNIKOV, QUARTIC, TRIWEIGHT};
+const uint KERNEL_SIZE = 5;
+const vector<kernel> kernels = {UNIFORM, TRIANGULAR, EPANECHNIKOV, QUARTIC, TRIWEIGHT};
 
-const uint NEIGHBORS_SIZE = 3;
-const uint neighbors[NEIGHBORS_SIZE] = {3, 5, 7};
+const uint NEIGHBORS_SIZE = 10;
+const vector<uint> neighbors = {1, 3, 5, 7, 9, 11, 13, 15, 17, 19};
 
 
-// KNN
+// Score
+
+struct score {
+
+    static double micro_f1(const vector<vector<double>>& cm, uint k) {
+        double n = 0;
+        double w[k], row_sum[k], column_sum[k];
+        double precision[k], recall[k];
+        for (uint i = 0; i < k; ++i) {
+            w[i] = row_sum[i] = column_sum[i] = 0;
+            precision[i] = recall[i] = 0;
+        }
+        for (uint i = 0; i < k; ++i) {
+            for (uint j = 0; j < k; ++j) {
+                n += cm[i][j];
+                w[i] += cm[i][j];
+                row_sum[i] += cm[i][j];
+                column_sum[j] += cm[i][j];
+            }
+        }
+        for (uint i = 0; i < k; ++i) {
+            precision[i] = row_sum[i] == 0 ? 0 : cm[i][i] / row_sum[i];
+            recall[i] = column_sum[i] == 0 ? 0 : cm[i][i] / column_sum[i];
+        }
+        double aver_precision = 0, aver_recall = 0;
+        for (uint i = 0; i < k; ++i) {
+            aver_precision += w[i] * precision[i];
+            aver_recall += w[i] * recall[i];
+        }
+        aver_precision /= n;
+        aver_recall /= n;
+        double denominator = aver_precision + aver_recall;
+        double aver_f = denominator == 0 ? 0 : 2 * aver_precision * aver_recall / denominator;
+        return aver_f;
+    }
+
+};
+
+
+// Knn
 
 struct object {
     uint ind;
@@ -40,29 +79,21 @@ struct object {
 
 struct knn {
 
-    knn(uint mm, uint kk, uint nn, const vector<object>& ddata) : m(mm), k(kk), n(nn) {
-        data = ddata;
-        random_shuffle(data.begin(), data.end());
-        for (uint i = 0; i < n / 4; ++i) {
-            valid.push_back(data[i]);
-        }
-        for (uint i = n / 4; i < n; ++i) {
-            train.push_back(data[i]);
-        }
+    knn(uint mm, uint kk, uint nn, const vector<object>& ddata) : m(mm), k(kk), n(nn), data(ddata) {
         cross_validation();
     }
 
     uint predict(const object& test) {
-        return predict(test, data);
+        return predict(test, (uint)data.size());
     }
-
 
     void write_predict_info(const object& test) {
         vector<pair<double, uint>> d;
         for (uint i = 0; i < data.size(); ++i) {
             d.emplace_back(make_pair(get_distance(test, data[i]), data[i].ind));
         }
-        sort(d.begin(), d.end());
+        random_shuffle(d.begin(), d.end());
+        sort(d.begin(), d.end(), cmp_pair);
         double h = d[neighb].first;
         cout << neighb << " ";
         for (uint i = 0; i < neighb; ++i) {
@@ -75,19 +106,13 @@ struct knn {
 private:
 
     uint m, k, n;
-    vector<object> data, train, valid;
-    metric mc = EUCLIDIAN;
-    kernel kl = QUARTIC;
-    uint neighb = 5;
+    vector<object> data;
+    metric mc;
+    kernel kl;
+    uint neighb;
 
-    double get_accuracy(const vector<object>& objs, const vector<uint>& pred) {
-        double right = 0;
-        for (uint i = 0; i < objs.size(); ++i) {
-            if (objs[i].c == pred[i]) {
-                ++right;
-            }
-        }
-        return right / objs.size();
+    static bool cmp_pair(const pair<double, uint>& a, const pair<double, uint>& b) {
+        return a.first < b.first;
     }
 
     double get_distance(const object& x, const object& y) {
@@ -108,6 +133,12 @@ private:
     }
 
     double get_weight(double p) {
+        if (kl == UNIFORM) {
+            return 0.5;
+        }
+        if (kl == TRIANGULAR) {
+            return 1 - p;
+        }
         double dif = 1 - p * p;
         if (kl == EPANECHNIKOV) {
             return 3.0 / 4.0 * dif;
@@ -121,20 +152,23 @@ private:
         return 0;
     }
 
-    uint predict(const object& test, const vector<object>& objs) {
+    uint predict(const object& test, uint blocked) {
         vector<pair<double, uint>> d;
-        for (uint j = 0; j < train.size(); ++j) {
-            d.emplace_back(make_pair(get_distance(test, objs[j]), objs[j].c));
+        for (uint j = 0; j < data.size(); ++j) {
+            if (j != blocked) {
+                d.emplace_back(make_pair(get_distance(test, data[j]), data[j].c));
+            }
         }
-        sort(d.begin(), d.end());
+        random_shuffle(d.begin(), d.end());
+        sort(d.begin(), d.end(), cmp_pair);
         double h = d[neighb].first;
-        vector<double> k_score(k + 1, 0);
+        vector<double> k_score(k, 0);
         for (uint i = 0; i < neighb; ++i) {
             k_score[d[i].second] += get_weight(d[i].first / h);
         }
         double best_k_score = 0;
         uint best_k = 0;
-        for (uint i = 1; i <= k; ++i) {
+        for (uint i = 0; i < k; ++i) {
             if (k_score[i] >= best_k_score) {
                 best_k_score = k_score[i];
                 best_k = i;
@@ -147,25 +181,39 @@ private:
         metric best_mc = mc;
         kernel best_kl = kl;
         uint best_neighb = neighb;
-        double best_accuracy = 0;
-        vector<uint> pred;
-        double accuracy;
+        double best_score = 0;
+        double score;
+        vector<vector<double>> cm;
+        cm.resize(k);
+        for (uint i = 0; i < k; ++i) {
+            cm[i].resize(k);
+        }
+        vector<metric> mcs = metrics;
+        random_shuffle(mcs.begin(), mcs.end());
+        vector<kernel> kls = kernels;
+        random_shuffle(kls.begin(), kls.end());
+        vector<uint> neighbs = neighbors;
+        random_shuffle(neighbs.begin(), neighbs.end());
         for (uint im = 0; im < METRIC_SIZE; ++im) {
-            mc = metrics[im];
+            mc = mcs[im];
             for (uint ik = 0; ik < KERNEL_SIZE; ++ik) {
-                kl = kernels[ik];
+                kl = kls[ik];
                 for (uint in = 0; in < NEIGHBORS_SIZE; ++in) {
-                    neighb = neighbors[in];
-                    pred.clear();
-                    for (uint i = 0; i < valid.size(); ++i) {
-                        pred.push_back(predict(valid[i], train));
+                    neighb = neighbs[in];
+                    for (uint i = 0; i < k; ++i) {
+                        for (uint j = 0; j < k; ++j) {
+                            cm[i][j] = 0;
+                        }
                     }
-                    accuracy = get_accuracy(valid, pred);
-                    if (accuracy >= best_accuracy) {
+                    for (uint i = 0; i < data.size(); ++i) {
+                        ++cm[data[i].c][predict(data[i], i)];
+                    }
+                    score = score::micro_f1(cm, k);
+                    if (score >= best_score) {
                         best_mc = mc;
                         best_kl = kl;
                         best_neighb = neighb;
-                        best_accuracy = accuracy;
+                        best_score = score;
                     }
                 }
             }
@@ -196,7 +244,7 @@ int main() {
             cin >> a[j];
         }
         cin >> c;
-        data.push_back({i + 1, a, c});
+        data.push_back({i + 1, a, c - 1});
     }
 
     knn solver{m, k, n, data};
@@ -209,7 +257,7 @@ int main() {
             cin >> b[j];
         }
         solver.write_predict_info({i + 1, b, 0});
-        //cout << "class: " << solver.predict({i + 1, b, 0}) << "\n";
+        //cout << "class: " << solver.predict({i + 1, b, 0}) + 1 << "\n";
     }
 
     return 0;
