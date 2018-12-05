@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.12)
-project(KNN)
+project(knn)
 
 set(CMAKE_CXX_STANDARD 14)
 
-add_executable(KNN knn.cpp)
-add_executable(KNN_TESTING knn_testing.cpp)
+add_executable(knn knn.cpp)
+add_executable(knn_testing knn_testing.cpp)
